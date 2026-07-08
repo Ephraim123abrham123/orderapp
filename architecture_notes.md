@@ -1,42 +1,83 @@
-# Architectural Decisions Summary
+# Architecture Decisions Document (ADD)
 
-We have structured the application using a clean separation of concerns, choosing patterns that support loose coupling, easy testability, and fast iteration.
-
----
-
-## 1. Backend Architecture: Ports and Adapters (Hexagonal)
-
-The backend is structured to isolate our core business logic from external libraries, transport protocols, and frameworks:
-* **Core / Domain**: Models (SQLAlchemy entities) and schemas (Pydantic models) represent our core concepts.
-* **Services**: Orchestrates business rules (e.g. `OrderService`, `BulkImportService`). They do not speak HTTP or database dialects directly; they execute workflow processes.
-* **Ports**: Abstract bases (e.g. `ExchangeRatePort`, `NotificationPort`, `TaskQueuePort`) define contracts.
-* **Adapters**: Concrete implementations (e.g. `ExchangeRateAdapter` calling HTTPX, `WebSocketNotificationAdapter` broadcasting to sockets, `BackgroundTaskAdapter` using FastAPI BackgroundTasks).
-* **Benefits**: In the future, we can change the database engine or swap out the local background task adapter for a distributed Celery queue without touching any service layer code.
+This document outlines the core architectural patterns, design principles, and technical decisions implemented in **orderapp**.
 
 ---
 
-## 2. Pluggable Metric Analytics Engine
+## 1. Architectural Style: Hexagonal (Ports & Adapters)
 
-Rather than hardcoding metric calculations inside routers, we implemented a pluggable **Metric Registry**:
-* **MetricCalculator Port**: An abstract calculator taking `List[Order]` and outputting the computed metric.
-* **Pluggable Calculators**: Isolated files for `RevenueTrendCalculator`, `StatusBreakdownCalculator`, and `TopCustomersCalculator`.
-* **Central Registry**: Associates unique keys to instances. 
-* **Extension**: Adding a new widget card requires writing a single isolated calculator class and registering it under `registry.py`—zero modifications to main analytics service pipelines.
+To ensure the long-term maintainability, testability, and decouple our business logic from external libraries, we adopted the **Hexagonal (Ports and Adapters) Architecture**.
+
+```
+                         +----------------------------------------+
+                         |                Adapters                |
+                         |  [Web/HTTP]   [WebSocket]  [Spreadsheet]|
+                         +-------------------+--------------------+
+                                             |
+                                             v
+                         +-------------------+--------------------+
+                         |                 Ports                  |
+                         |  [Notification] [TaskQueue] [Converter]|
+                         +-------------------+--------------------+
+                                             |
+                                             v
+                         +-------------------+--------------------+
+                         |                Services                |
+                         |  [OrderService]   [BulkImportService]  |
+                         +-------------------+--------------------+
+                                             |
+                                             v
+                         +-------------------+--------------------+
+                         |             Repository                 |
+                         |  [OrderRepo]      [UserRepo]           |
+                         +----------------------------------------+
+```
+
+### Key Layers:
+1. **Core Domain (Models & Schemas)**: Pure representations of data structures (SQLAlchemy models) and validation constraints (Pydantic models). They are framework-agnostic.
+2. **Repository Layer**: Encapsulates all raw SQL/ORM query transactions (e.g. `OrderRepository`). Services never construct database queries directly.
+3. **Services**: Contains the core business logic and orchestration rules (e.g., coordinates order validation, conversion calculations, and broadcast updates).
+4. **Ports**: Abstract interfaces (defined via Python `abc.ABCMeta`) establishing strict interaction contracts for external communications.
+5. **Adapters**: Concrete implementations of Ports (e.g., `ExchangeRateAdapter` calling the external API, `WebSocketNotificationAdapter` broadcasting payloads).
+
+* **Decision Rationale**: By isolating business logic from drivers, we can swap out the database engine (e.g. migrate to CockroachDB) or the background task provider (e.g. migrate from FastAPI BackgroundTasks to a celery/redis queue) without changing any code in the service layer.
 
 ---
 
-## 3. Real-Time Synchronization Architecture
+## 2. Real-Time Synchronization Protocol
 
-To build a zero-refresh dashboard, we chose an **Event-Driven WebSocket Model**:
-1. **WebSocket Connection Manager**: Tracks active browser tabs, automatically clean-sweeps dead connections, and schedules heartbeats.
-2. **Immediate Action Broadcast**: Any endpoint mutation (e.g., status changes or file uploads completing) triggers services to publish JSON event payloads.
-3. **Reactive Query Invalidation**: Rather than mapping incoming socket packages directly into local react states (which bypasses cache and creates data desyncs), we use the WebSocket event to invalidate TanStack React Query queries. React Query refetches affected scopes behind the scenes, ensuring the entire view updates automatically and stays fully in sync with the database.
+Rather than relying on resource-intensive REST polling or complex server-sent event (SSE) channels, we chose an **Event-Driven WebSocket Model**:
+
+* **Connection Registry**: The backend `ConnectionManager` accepts authenticated socket client streams, manages heartbeats, and cleans up inactive/disconnected connections.
+* **Immediate Broadcast**: When a mutation occurs (order created, status changed, bulk import finishes), the service triggers `broadcast_order_status_change` using the notification adapter.
+* **Reactive Client-Side Invalidation**: 
+  Instead of mapping socket event payloads directly into local React state (which risk getting out of sync with paginated data), the frontend `useWebSocket.tsx` hook catches the event and triggers **TanStack React Query Cache Invalidation**. 
+  React Query automatically fetches the fresh dataset in the background, updating all data grids and KPI summary panels reactively and concurrently across all connected browser sessions without requiring page reloads.
 
 ---
 
-## 4. Frontend State & UI Decisions
+## 3. Pluggable Metrics Analytics Engine
 
-* **Zustand**: Used for lightweight global UI states (sidebar status, active theme, global alert toast queue).
-* **TanStack React Query**: Used for server-state caching, page mutations, and reactive cache invalidation.
-* **SheetJS (xlsx)**: Parses selected spreadsheet files locally in-browser to preview the first 5 rows *before* transmitting bytes to the server, enhancing user confidence.
-* **React Grid Layout**: Manages drag-and-drop coordinate arrays. Layout adjustments are debounced and saved in PostgreSQL using a JSONB column format associated with the user record.
+To calculate dashboard KPIs and chart values dynamically, we avoided hardcoding calculations inside controllers. Instead, we implemented a **Metrics Calculator Registry**:
+
+* **Design**: An abstract `MetricCalculator` base defines the structure. Concrete subclasses (`RevenueTrendCalculator`, `StatusBreakdownCalculator`, `TopCustomersCalculator`) implement their specific queries and aggregation logic.
+* **Registry**: A central registry maps calculator keys to instances. 
+* **Decision Rationale**: To add a new dashboard widget or calculation, a developer only needs to write a new calculator class and register it. The main analytical service logic remains entirely untouched, adhering to the Open-Closed Principle.
+
+---
+
+## 4. Database Schema & Concurrency
+
+The database is built on **PostgreSQL 15** and managed using **Alembic** migrations.
+
+* **Indexing for High Lookups**: We added database indexes on the `customer_name` and `status` columns of the `orders` table. These columns are heavily queried during pagination, search, and status updates.
+* **ORM Lazy Loading Prevention**: In SQLAlchemy async configurations, accessing database-generated columns (like `updated_at` on modification flushes) outside of an awaited session context raises a `MissingGreenlet` error. To avoid this, our repositories explicitly call `await self.db.refresh(obj)` right after flushes to fetch database-generated values under the active transaction before rendering.
+
+---
+
+## 5. Third-Party Integrations & Resilience
+
+Our system calculates the USD value of foreign currencies dynamically.
+
+* **Primary Adapter**: Integrates with the open `ExchangeRate-API`.
+* **Graceful Degradation (Resilience)**: If the API times out or is offline, the adapter catches the exception, logs it, and falls back to a locally stored, hardcoded exchange rate dictionary (e.g., `EUR -> USD = 1.09`, `GBP -> USD = 1.28`). This ensures the creation of orders never fails, and dashboard operations remain 100% online.
