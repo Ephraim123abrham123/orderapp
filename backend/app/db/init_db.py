@@ -5,7 +5,6 @@ Generates schema tables if missing and seeds initial default users, dashboard co
 import asyncio
 import decimal
 from datetime import datetime, timedelta, timezone
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.db.session import async_session_maker, engine
 from app.models.base import Base

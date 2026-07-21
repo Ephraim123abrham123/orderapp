@@ -10,14 +10,14 @@ echo "============================================="
 echo "-> Starting Backend API (FastAPI)..."
 cd backend
 source .venv/bin/activate
-PYTHONPATH=. uvicorn app.main:app --port 8000 &
+PYTHONPATH=. uvicorn app.main:app --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
 cd ..
 
 # Start frontend Next.js dev server in the background
 echo "-> Starting Frontend Web App (Next.js)..."
 cd frontend
-npm run dev &
+npm run dev -- -H 0.0.0.0 &
 FRONTEND_PID=$!
 cd ..
 

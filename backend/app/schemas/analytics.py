@@ -1,5 +1,5 @@
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, ConfigDict
+from typing import List, Dict, Any
+from pydantic import BaseModel
 
 
 class WidgetConfigSchema(BaseModel):

@@ -24,3 +24,8 @@ class NotificationPort(ABC):
     ) -> None:
         """Broadcasts completion status along with failure logs for bulk imports"""
         pass
+
+    @abstractmethod
+    async def broadcast_audit_log_created(self, audit_log_data: dict) -> None:
+        """Broadcasts newly created audit log entry events"""
+        pass

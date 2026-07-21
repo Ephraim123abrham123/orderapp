@@ -44,3 +44,9 @@ class WebSocketNotificationAdapter(NotificationPort):
                 "status": status
             }
         })
+
+    async def broadcast_audit_log_created(self, audit_log_data: dict) -> None:
+        await manager.broadcast({
+            "event": "audit_log_created",
+            "data": audit_log_data
+        })

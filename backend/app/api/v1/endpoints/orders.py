@@ -63,4 +63,6 @@ async def update_order_status(
 ):
     """Update order status and broadcast change instantly via WebSockets"""
     order_service = OrderService(db)
-    return await order_service.update_order_status(order_id, status_update.status)
+    return await order_service.update_order_status(
+        order_id, status_update.status, changed_by_user_id=current_user.id
+    )

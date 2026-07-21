@@ -6,6 +6,7 @@ import KpiCardWidget from "@/components/analytics/widgets/KpiCardWidget";
 import RevenueTrendWidget from "@/components/analytics/widgets/RevenueTrendWidget";
 import StatusBreakdownWidget from "@/components/analytics/widgets/StatusBreakdownWidget";
 import TopCustomersWidget from "@/components/analytics/widgets/TopCustomersWidget";
+import AuditLogPanel from "@/components/analytics/AuditLogPanel";
 import { Loader2, TrendingUp, DollarSign, ShoppingBag, PieChart as PieIcon, Award } from "lucide-react";
 
 export default function DashboardPage() {
@@ -105,9 +106,9 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Rankings Grid */}
-      <div className="grid grid-cols-1 gap-6">
-        <div className="border border-slate-800 rounded-2xl bg-slate-900/40 p-4 shadow-xl">
+      {/* Rankings Grid & Audit logs */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="lg:col-span-6 border border-slate-800 rounded-2xl bg-slate-900/40 p-4 shadow-xl">
           <div className="flex items-center gap-2 border-b border-slate-800/60 pb-2 mb-4">
             <Award className="h-4 w-4 text-indigo-400" />
             <h3 className="text-sm font-semibold text-slate-200">Top Performing Customers</h3>
@@ -115,6 +116,10 @@ export default function DashboardPage() {
           <div className="h-64">
             <TopCustomersWidget data={metrics.top_customers} />
           </div>
+        </div>
+
+        <div className="lg:col-span-6">
+          <AuditLogPanel />
         </div>
       </div>
     </div>

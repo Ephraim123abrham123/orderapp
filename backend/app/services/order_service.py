@@ -1,17 +1,20 @@
-import decimal
 from typing import List, Tuple, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.order_repository import OrderRepository
+from app.repositories.audit_log_repository import AuditLogRepository
 from app.adapters.external_api.exchange_rate_adapter import ExchangeRateAdapter
 from app.adapters.notifications.websocket_adapter import WebSocketNotificationAdapter
 from app.models.order import Order
+from app.models.audit_log import AuditLog
 from app.schemas.order import OrderCreate, OrderOut
+from app.schemas.audit_log import AuditLogOut
 from app.core.exceptions import EntityNotFoundException
 
 
 class OrderService:
     def __init__(self, db: AsyncSession):
         self.order_repo = OrderRepository(db)
+        self.audit_repo = AuditLogRepository(db)
         self.exchange_adapter = ExchangeRateAdapter()
         self.notifier = WebSocketNotificationAdapter()
 
@@ -58,7 +61,9 @@ class OrderService:
         
         return created_order
 
-    async def update_order_status(self, order_id: int, new_status: str) -> Order:
+    async def update_order_status(
+        self, order_id: int, new_status: str, changed_by_user_id: Optional[int] = None
+    ) -> Order:
         order = await self.get_order_by_id(order_id)
         old_status = order.status
         
@@ -68,7 +73,18 @@ class OrderService:
         order.status = new_status
         updated_order = await self.order_repo.update(order)
         
-        # Serialize for WebSocket notification
+        # 1. Create and persist audit log entry
+        audit_entry = AuditLog(
+            entity_type="order",
+            entity_id=order_id,
+            action="status_change",
+            old_value=old_status,
+            new_value=new_status,
+            changed_by=changed_by_user_id
+        )
+        created_audit = await self.audit_repo.create(audit_entry)
+        
+        # 2. Serialize for WebSocket notification
         serialized_order = OrderOut.model_validate(updated_order).model_dump(mode="json")
         await self.notifier.broadcast_order_status_change(
             order_id=updated_order.id,
@@ -76,5 +92,9 @@ class OrderService:
             new_status=new_status,
             order_data=serialized_order
         )
+        
+        # 3. Broadcast newly created audit log entry live
+        serialized_audit = AuditLogOut.model_validate(created_audit).model_dump(mode="json")
+        await self.notifier.broadcast_audit_log_created(serialized_audit)
         
         return updated_order

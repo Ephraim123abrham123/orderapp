@@ -1,5 +1,5 @@
 from typing import List, Tuple, Optional
-from sqlalchemy import select, func, or_, insert
+from sqlalchemy import select, func, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.order import Order
 
